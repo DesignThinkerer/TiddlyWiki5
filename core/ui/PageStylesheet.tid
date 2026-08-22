@@ -4,7 +4,7 @@ code-body: yes
 \import [subfilter{$:/core/config/GlobalImportFilter}]
 
 \function sanitize.css.rule()
-"[^a-zA-Z0-9_-]"=>pattern
+"[^a-zA-Z0-9_.-]"=>pattern
 [search-replace[$:/],[system-]search-replace:g:regexp<pattern>,[-]addprefix[tw-]]
 \end
 
