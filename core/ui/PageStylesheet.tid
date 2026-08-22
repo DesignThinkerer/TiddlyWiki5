@@ -5,7 +5,8 @@ code-body: yes
 
 \function sanitize.css.rule()
 "[^a-zA-Z0-9_.-]"=>pattern
-[search-replace[$:/],[system-]search-replace:g:regexp<pattern>,[-]addprefix[tw-]]
+"\.([0-9])"=>digit-pattern
+[search-replace[$:/],[system-]search-replace:g:regexp<pattern>,[-]search-replace:g:regexp<digit-pattern>,[.n$1]addprefix[tw-]]
 \end
 
 \whitespace trim
