@@ -59,7 +59,7 @@ function loadIFrame(url,callback) {
 			flushCallbacks(iframeInfo);
 		};
 		iframe.onerror = function() {
-			 flushCallbacks(iframeInfo, "Cannot load iframe");
+			flushCallbacks(iframeInfo, "Cannot load iframe");
 		};
 		try {
 			iframe.src = url;
