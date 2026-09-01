@@ -15,9 +15,8 @@ Retains iframe.onload as a backward-compatible fallback for legacy or external l
 that do not emit the ready signal.
 
 Previously, the browser-messaging.js relied entirely on iframe.onload to trigger the initial 
-postMessage call to a plugin library. However, onload only indicates that the HTML document 
-shell has finished parsing into the DOM, not that the inline script inside the iframe has 
-finished executing or successfully bound its window.addEventListener("message"). This could 
-cause messages to be lost if the iframe's script initialization was delayed by even a few 
-milliseconds due to main-thread congestion or slow hardware. The new handshake eliminates 
-this timing-dependent race condition by actively confirming readiness.
+postMessage call to a plugin library. However, if the iframe's connection or load is aborted 
+after its internal script has already run and bound window.addEventListener("message"), onload 
+never fires at all, so the initial postMessage call is never sent and the request is silently 
+lost with no error. The new handshake eliminates this by having the iframe actively confirm 
+readiness as soon as its listener is bound, independent of whether onload ever fires.
