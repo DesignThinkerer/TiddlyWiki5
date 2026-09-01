@@ -4,7 +4,6 @@ type: application/javascript
 module-type: startup
 
 Browser message handling
-ss
 \*/
 
 "use strict";
