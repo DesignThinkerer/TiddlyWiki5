@@ -3,7 +3,7 @@ title: test-browser-messaging.js
 type: application/javascript
 tags: [[$:/tags/test-spec]]
 
-Tests for browser messaging and iframe communication, including the PLUGIN-LIBRARY-READY handshake.
+Tests the PLUGIN-LIBRARY-READY handshake and legacy onload fallback.
 
 \*/
 
@@ -11,312 +11,130 @@ Tests for browser messaging and iframe communication, including the PLUGIN-LIBRA
 
 describe("Browser Messaging", function() {
 
-	beforeEach(function() {
-		// Initialize browserMessaging
-		if(!$tw.browserMessaging) {
-			$tw.browserMessaging = {};
-		}
-		$tw.browserMessaging.iframeInfoMap = {};
-	});
+    it("should declare itself as a synchronous browser-only startup module", function() {
+        var startup = require("$:/core/modules/browser-messaging.js");
+        expect(startup.name).toBe("browser-messaging");
+        expect(startup.platforms).toEqual(["browser"]);
+        expect(startup.synchronous).toBe(true);
+        expect(typeof startup.startup).toBe("function");
+    });
 
-	afterEach(function() {
-		// Cleanup
-		$tw.browserMessaging.iframeInfoMap = {};
-	});
+    // loadIFrame()/flushCallbacks() are private to browser-messaging.js, so the only way
+    // to exercise them for real is through $tw.rootWidget events and real postMessage
+    // traffic with a real iframe, rather than re-implementing their logic here.
+    describe("plugin library iframe handshake", function() {
 
-	describe("flushCallbacks", function() {
+        var urlsToUnload;
 
-		it("should mark iframe as loaded and execute all queued callbacks", function() {
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-			
-			var callback1Called = false;
-			var callback2Called = false;
-			var callback1Arg = null;
-			var callback2Arg = null;
+        beforeEach(function() {
+            if(!$tw.browser) { return; }
+            urlsToUnload = [];
+        });
 
-			iframeInfo.callbacks.push(function(err, info) {
-				callback1Called = true;
-				callback1Arg = err;
-			});
-			iframeInfo.callbacks.push(function(err, info) {
-				callback2Called = true;
-				callback2Arg = err;
-			});
+        afterEach(function() {
+            if(!$tw.browser) { return; }
+            urlsToUnload.forEach(function(url) {
+                // Grab the DOM node before unloading clears the map entry, as a
+                // belt-and-braces removal (unloadIFrame's own removal has an
+                // unrelated off-by-one loop bug for small iframe counts).
+                var info = $tw.browserMessaging.iframeInfoMap[url];
+                $tw.rootWidget.dispatchEvent({type: "tm-unload-plugin-library", paramObject: {url: url}});
+                if(info && info.domNode && info.domNode.parentNode) {
+                    info.domNode.parentNode.removeChild(info.domNode);
+                }
+                URL.revokeObjectURL(url);
+            });
+        });
 
-			// Simulate flushCallbacks
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "loaded";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(null, iframeInfo);
-				}
-			}
+        function makeChildUrl(script) {
+            var blob = new Blob(["<script>" + script + "<\/script>"],{type: "text/html"});
+            var url = URL.createObjectURL(blob);
+            urlsToUnload.push(url);
+            return url;
+        }
 
-			expect(callback1Called).toBe(true);
-			expect(callback2Called).toBe(true);
-			expect(callback1Arg).toBe(null);
-			expect(callback2Arg).toBe(null);
-			expect(iframeInfo.callbacks.length).toBe(0);
-		});
+        function waitUntil(predicate,done,description) {
+            var attempts = 0;
+            (function check() {
+                if(predicate()) {
+                    done();
+                } else if(++attempts > 400) {
+                    done.fail("Timed out waiting for: " + description);
+                } else {
+                    setTimeout(check,20);
+                }
+            })();
+        }
 
-		it("should not execute callbacks if status is already loaded", function() {
-			var iframeInfo = {
-				status: "loaded",
-				callbacks: []
-			};
-			
-			var callbackCalled = false;
-			iframeInfo.callbacks.push(function(err, info) {
-				callbackCalled = true;
-			});
+        it("should complete the real GET / GET-RESPONSE round trip once the child signals PLUGIN-LIBRARY-READY", function(done) {
+            if(!$tw.browser) { pending("browser-only: requires a real iframe and postMessage - run in browser"); return; }
 
-			// Simulate flushCallbacks
-			if(iframeInfo.status !== "loaded") {
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(null, iframeInfo);
-				}
-			}
+            // Mirrors plugins/tiddlywiki/pluginlibrary/libraryserver.js's real handshake and GET handling:
+            // listener registration and the ready postMessage both happen synchronously, before <body> parses,
+            // so onload (the legacy fallback below) cannot win this race for a well-behaved child.
+            var url = makeChildUrl(
+                "window.addEventListener('message',function(e){" +
+                "if(e.data && e.data.verb === 'GET' && e.data.url === 'recipes/library/tiddlers.json'){" +
+                "e.source.postMessage({verb:'GET-RESPONSE',status:'200',cookies:e.data.cookies,url:e.data.url," +
+                "type:'application/json',body:JSON.stringify([{title:'ExamplePlugin',type:'application/json',text:'{}'}])},'*');" +
+                "}});" +
+                "window.parent.postMessage({verb:'PLUGIN-LIBRARY-READY'},'*');"
+            );
+            var expectedTitle = "$:/temp/RemoteAssetInfo/" + url + "/ExamplePlugin";
 
-			expect(callbackCalled).toBe(false);
-			expect(iframeInfo.callbacks.length).toBe(1);
-		});
+            $tw.rootWidget.dispatchEvent({
+                type: "tm-load-plugin-library",
+                paramObject: {url: url}
+            });
 
-		it("should pass error to callbacks if provided", function() {
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-			
-			var errorReceived = null;
-			var testError = "Test error message";
+            waitUntil(function() {
+                return !!$tw.wiki.getTiddler(expectedTitle);
+            },done,"tiddler " + expectedTitle);
+        },10000);
 
-			iframeInfo.callbacks.push(function(err, info) {
-				errorReceived = err;
-			});
+        it("should still resolve via the legacy iframe.onload fallback when the child never sends PLUGIN-LIBRARY-READY", function(done) {
+            if(!$tw.browser) { pending("browser-only: requires a real iframe - run in browser"); return; }
 
-			// Simulate flushCallbacks with error
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "error";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(testError, iframeInfo);
-				}
-			}
+            // A blank document that never sends the handshake exercises the onload-only legacy path.
+            var url = makeChildUrl("");
 
-			expect(errorReceived).toBe(testError);
-			expect(iframeInfo.status).toBe("error");
-		});
+            $tw.rootWidget.dispatchEvent({
+                type: "tm-load-plugin-library",
+                paramObject: {url: url}
+            });
 
-	});
+            waitUntil(function() {
+                var info = $tw.browserMessaging.iframeInfoMap[url];
+                return !!info && info.status === "loaded";
+            },done,"iframe status to become 'loaded' via onload");
+        },10000);
 
-	describe("loadIFrame callback queueing", function() {
+        it("should complete the round trip via PLUGIN-LIBRARY-READY even when the child's own load is aborted and onload can never fire", function(done) {
+            if(!$tw.browser) { pending("browser-only: requires a real iframe and postMessage - run in browser"); return; }
 
-		it("should queue multiple callbacks for the same iframe", function() {
-			var iframeInfo = {
-				url: "http://example.com/library.html",
-				status: "loading",
-				callbacks: []
-			};
+            // window.stop() simulates onload never firing despite the library being ready,
+            // so only the PLUGIN-LIBRARY-READY message can complete this round trip.
+            var url = makeChildUrl(
+                "window.addEventListener('message',function(e){" +
+                "if(e.data && e.data.verb === 'GET' && e.data.url === 'recipes/library/tiddlers.json'){" +
+                "e.source.postMessage({verb:'GET-RESPONSE',status:'200',cookies:e.data.cookies,url:e.data.url," +
+                "type:'application/json',body:JSON.stringify([{title:'ExamplePlugin',type:'application/json',text:'{}'}])},'*');" +
+                "}});" +
+                "window.parent.postMessage({verb:'PLUGIN-LIBRARY-READY'},'*');" +
+                "window.stop();"
+            );
+            var expectedTitle = "$:/temp/RemoteAssetInfo/" + url + "/ExamplePlugin";
 
-			var callback1Called = false;
-			var callback2Called = false;
+            $tw.rootWidget.dispatchEvent({
+                type: "tm-load-plugin-library",
+                paramObject: {url: url}
+            });
 
-			// Simulate queueing callbacks
-			iframeInfo.callbacks.push(function(err, info) {
-				callback1Called = true;
-			});
-			iframeInfo.callbacks.push(function(err, info) {
-				callback2Called = true;
-			});
+            waitUntil(function() {
+                return !!$tw.wiki.getTiddler(expectedTitle);
+            },done,"tiddler " + expectedTitle);
+        },10000);
 
-			expect(iframeInfo.callbacks.length).toBe(2);
-
-			// Simulate PLUGIN-LIBRARY-READY arriving
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "loaded";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(null, iframeInfo);
-				}
-			}
-
-			expect(callback1Called).toBe(true);
-			expect(callback2Called).toBe(true);
-			expect(iframeInfo.callbacks.length).toBe(0);
-		});
-
-	});
-
-	describe("PLUGIN-LIBRARY-READY message handling", function() {
-
-		it("should recognize PLUGIN-LIBRARY-READY verb", function() {
-			var message = {
-				verb: "PLUGIN-LIBRARY-READY"
-			};
-
-			expect(message.verb).toBe("PLUGIN-LIBRARY-READY");
-		});
-
-		it("should match iframe by contentWindow source", function() {
-			// Create mock iframes
-			var mockContentWindow1 = {};
-			var mockContentWindow2 = {};
-			var mockDomNode1 = { contentWindow: mockContentWindow1 };
-			var mockDomNode2 = { contentWindow: mockContentWindow2 };
-
-			$tw.browserMessaging.iframeInfoMap = {
-				"url1": {
-					url: "url1",
-					status: "loading",
-					domNode: mockDomNode1,
-					callbacks: []
-				},
-				"url2": {
-					url: "url2",
-					status: "loading",
-					domNode: mockDomNode2,
-					callbacks: []
-				}
-			};
-
-			var matchedInfo = null;
-			var messageSource = mockContentWindow2;
-
-			// Simulate finding matching iframe
-			$tw.utils.each($tw.browserMessaging.iframeInfoMap, function(info) {
-				if(info && info.domNode && info.domNode.contentWindow === messageSource) {
-					matchedInfo = info;
-				}
-			});
-
-			expect(matchedInfo).toBe($tw.browserMessaging.iframeInfoMap["url2"]);
-			expect(matchedInfo.url).toBe("url2");
-		});
-
-	});
-
-	describe("Backward compatibility with iframe.onload", function() {
-
-		it("should handle iframe.onload as fallback when PLUGIN-LIBRARY-READY is not sent", function() {
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-
-			var callbackCalled = false;
-			iframeInfo.callbacks.push(function(err, info) {
-				callbackCalled = true;
-			});
-
-			// Simulate onload firing (fallback path)
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "loaded";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(null, iframeInfo);
-				}
-			}
-
-			expect(callbackCalled).toBe(true);
-			expect(iframeInfo.status).toBe("loaded");
-		});
-
-	});
-
-	describe("Error handling", function() {
-
-		it("should handle iframe onerror events", function() {
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-
-			var errorReceived = null;
-			var errorMessage = "Cannot load iframe";
-
-			iframeInfo.callbacks.push(function(err, info) {
-				errorReceived = err;
-			});
-
-			// Simulate onerror
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "error";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(errorMessage, iframeInfo);
-				}
-			}
-
-			expect(errorReceived).toBe(errorMessage);
-			expect(iframeInfo.status).toBe("error");
-		});
-
-		it("should handle exceptions during iframe.src assignment", function() {
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-
-			var exceptionReceived = null;
-			var testException = new Error("Security exception");
-
-			iframeInfo.callbacks.push(function(err, info) {
-				exceptionReceived = err;
-			});
-
-			// Simulate exception handling
-			if(iframeInfo.status !== "loaded") {
-				iframeInfo.status = "error";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(testException, iframeInfo);
-				}
-			}
-
-			expect(exceptionReceived).toBe(testException);
-			expect(iframeInfo.status).toBe("error");
-		});
-
-	});
-
-	describe("Race condition prevention", function() {
-
-		it("should ensure messages are not dropped due to timing", function() {
-			// Simulate the race condition scenario
-			var iframeInfo = {
-				status: "loading",
-				callbacks: []
-			};
-
-			var messageReceived = false;
-			var callbackFired = false;
-
-			// Queue a callback (simulating parent window loading iframe)
-			iframeInfo.callbacks.push(function(err, info) {
-				callbackFired = true;
-			});
-
-			// Simulate PLUGIN-LIBRARY-READY arriving before callback is fired
-			messageReceived = true;
-
-			// Simulate receiving PLUGIN-LIBRARY-READY and flushing
-			if(iframeInfo.status !== "loaded" && messageReceived) {
-				iframeInfo.status = "loaded";
-				var cb;
-				while((cb = iframeInfo.callbacks.shift())) {
-					cb(null, iframeInfo);
-				}
-			}
-
-			expect(messageReceived).toBe(true);
-			expect(callbackFired).toBe(true);
-			expect(iframeInfo.status).toBe("loaded");
-		});
-
-	});
+    });
 
 });
