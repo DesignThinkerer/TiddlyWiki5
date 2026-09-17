@@ -120,7 +120,7 @@ plugin-filter={{{ [{!!plugin-filter}!is[blank]]  ~"[{!!title}plugintiddlers[]]" 
 <$action-sendmessage $message="tm-download-file" $param="$:/core/templates/exporters/JsonFile" exportFilter={{!!title}} filename=`${[{!!title}]}$_${[{!!version}!is[blank]else[0.0.0]]}$.json` type="application/json" />
 \end
 
-You can use this table to create or update a plugin. Select a plugin, theme or language using the select widget on the first row. You can filter the list by manually writing the name of the plugin in the input next to it.
+This interactive tool allows you to create and update plugins directly from TiddlyWiki. Select a plugin, theme, or language using the dropdown in the first row. You can quickly filter the list by typing a name directly into the adjacent input field.
 
 <$tiddler tiddler="$:/temp/plugin">
 
@@ -190,7 +190,7 @@ description={{{ [<plugin-fields>jsonget<field-index>,[description]] }}}
 <%if [{!!title}!is[blank]]%>
 
 <$button actions="""<$transclude $variable="update-plugin" plugin-title={{!!title}} />""">
-  {{$:/core/images/refresh-button}} Update Plugin
+  {{$:/core/images/refresh-button}} Update Plugin (individual tiddlers will be permanently merged into the plugin!)
 </$button>
 <$button actions="""<<export-plugin-action>>""">
   {{$:/core/images/export-button}} Export Plugin
