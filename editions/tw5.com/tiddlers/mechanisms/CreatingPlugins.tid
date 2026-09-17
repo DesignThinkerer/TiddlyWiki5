@@ -1,0 +1,207 @@
+created: 20260915003850874
+modified: 20260917164632910
+tags: Mechanisms
+title: Creating a plugin
+type: text/vnd.tiddlywiki
+
+\define excluded-fields() created creator modified modifier title bag revision
+
+\define plugin-fields() 
+[
+  {
+    "field": "name",
+    "description": "Brief name of the plugin.",
+    "optional": false
+  },
+  {
+    "field": "description",
+    "description": "Description of plugin.",
+    "optional": false
+  },
+  {
+    "field": "plugin-type",
+    "description": "Generally plugin, language or theme.",
+    "optional": false
+  },
+  {
+    "field": "author",
+    "description": "Author of plugin.",
+    "optional": true
+  },
+  {
+    "field": "version",
+    "description": "Version string (should conform to semantic versioning convention).",
+    "optional": true
+  },
+  {
+    "field": "stability",
+    "description": "Development state of the plugin",
+    "optional": true
+  },
+  {
+    "field": "core-version",
+    "description": "TiddlyWiki core version required for this plugin to function properly (e.g., >=5.1.22).",
+    "optional": true
+  },
+  {
+    "field": "platform",
+    "description": "Set this field to node to restrict the plugin to only be loaded on the server.",
+    "optional": true
+  },
+  {
+    "field": "parent-plugin",
+    "description": "Title of the plugin under which this plugin should be displayed as a sub-plugin in the control panel plugin chooser.",
+    "optional": true
+  },
+  {
+    "field": "dependents",
+    "caption":"Plugin Dependencies",
+    "description": "List of dependencies: plugins that should be installed in order for this one to work.",
+    "optional": false
+  },
+  {
+    "field": "plugin-priority",
+    "description": "Numerical priority (higher numbers install later, the core plugin has a priority of zero).",
+    "optional": true
+  },
+  {
+    "field": "source",
+    "description": "Source URL of plugin.",
+    "optional": true
+  },
+  {
+    "field": "list",
+    "description": "Names of exposed plugin information tiddlers (readme, license, ..)",
+    "optional": false
+  },
+  {
+    "field": "plugin-filter",
+    "description": "Filter expression used to select the tiddlers for the plugin.",
+    "optional": false
+  }
+]
+\end
+
+\function plugin.types() plugin language theme [each:list-item[plugin-type]] -info -import 
+
+\function field.value() [<..currentTiddler>get{!!title}]
+
+\function json.fields()
+[{!!title}fields:exclude<excluded-fields>]
+:filter[<field.value>!is[blank]]
+text
+:reduce[<accumulator>jsonset{!!title},<field.value>]
+\end
+
+\function json.plugin()
+[subfilter{!!plugin-filter}]
+:reduce[<accumulator>jsonset:json{!!title},<json.fields>]
+:map[[]jsonset:json[tiddlers],{!!title}]
+\end
+
+\procedure change-actions()
+<$action-setfield 
+  $tiddler={{!!plugin-title}} 
+  plugin-type={{{ [{!!plugin-title}get[plugin-type]!is[blank]else[plugin]] }}} 
+  type="application/json"
+/>
+\end
+
+\procedure update-plugin(plugin-title)
+<$action-setfield
+$tiddler=<<plugin-title>>
+text=<<json.plugin>>
+plugin-filter={{{ [{!!plugin-filter}!is[blank]]  ~"[{!!title}plugintiddlers[]]" }}}
+/>
+<$action-deletetiddler $filter={{!!plugin-filter}}/>
+\end
+
+\function plugins.filter() [has[plugin-type]] -[[$:/temp/info-plugin]] -[[$:/core]] -[[$:/Import]]
+
+\procedure export-plugin-action()
+<$action-sendmessage $message="tm-download-file" $param="$:/core/templates/exporters/JsonFile" exportFilter={{!!title}} filename=`${[{!!title}]}$_${[{!!version}!is[blank]else[0.0.0]]}$.json` type="application/json" />
+\end
+
+You can use this table to create or update a plugin. Select a plugin, theme or language using the select widget on the first row. You can filter the list by manually writing the name of the plugin in the input next to it.
+
+<$tiddler tiddler="$:/temp/plugin">
+
+<$eventcatcher matchSelector=":is(select,input):not(.plugin-title *)" $change=<<change-actions>> tag="table"  class="tc-max-width tc-edit-max-width">
+<tr>
+<td class="plugin-title" title="Title of plugin">
+<$select field="plugin-title" default={{!!plugin-title}} style.width="20ch">
+<option disabled value={{!!plugin-title}} style="display:none">Plugin title</option>
+<$list filter="[function[plugin.types]]" variable="optgroup-label">
+<optgroup label={{{ [<optgroup-label>titlecase[]] }}} >
+<$list filter="
+[function[plugins.filter]plugin-type<optgroup-label>search:title{!!plugin-title}]
+" variable="name">
+<$genesis
+$type="option"
+value={{{ [<name>!match{!!plugin-title}] }}}
+$names="disabled title :filter[<name>match{!!plugin-title}]"
+$values="=true =[[Plugin selected]]">
+<$text text={{{ [<name>get[name]else<name>split[/]last[]] }}} />
+</$genesis>
+</$list>
+</optgroup>
+</$list>
+</$select>
+</td>
+<td>
+<$edit field="plugin-title"/>
+</td>
+</tr>
+<$tiddler tiddler={{!!plugin-title}} >
+<$list filter="[<plugin-fields>jsonindexes[]]" variable="field-index">
+<$let 
+field={{{ [<plugin-fields>jsonget<field-index>,[field]] }}} 
+optional={{{ [<plugin-fields>jsonget<field-index>,[optional]] }}}
+caption={{{ [<plugin-fields>jsonget<field-index>,[caption]else<field>split[-]join[ ]sentencecase[]] }}}
+description={{{ [<plugin-fields>jsonget<field-index>,[description]] }}}
+>
+<tr>
+<td title=<<description>> ><<caption>> <%if [<optional>match[true]]%><span style.color="var(--tpc-muted-foreground)">(optional)</span><%endif%></td>
+<td>
+<%if [<field>match[stability]]%>
+<$select field="stability" default="STABILITY_1_EXPERIMENTAL">
+<$list filter="deprecated experimental stable legacy" counter="stability">
+<option value={{{STABILITY [<stability>add[-1]] [{!!title}uppercase[]] +[join[_]] }}}>{{!!title}}</option>
+</$list>
+</$select>
+<%elseif [<field>match[plugin-type]]%>
+<$select field="plugin-type" default="plugin">
+<$list filter="[function[plugin.types]]">
+<option value={{!!title}} >{{!!title}}</option>
+</$list>
+</$select>
+<%elseif [<field>match[plugin-filter]]%>
+<$edit field="plugin-filter" tag="textarea" class="tc-edit-texteditor"/>
+<%else%>
+<$edit field=<<field>> />
+<%endif%>
+</td>
+</tr>
+</$let>
+</$list>
+</$tiddler>
+</$eventcatcher>
+
+<$tiddler tiddler={{!!plugin-title}} >
+
+<%if [{!!title}!is[blank]]%>
+
+<$button actions="""<$transclude $variable="update-plugin" plugin-title={{!!title}} />""">
+  {{$:/core/images/refresh-button}} Update Plugin
+</$button>
+<$button actions="""<<export-plugin-action>>""">
+  {{$:/core/images/export-button}} Export Plugin
+</$button>
+
+<$let plugin-type={{!!plugin-type}} qualified-state=<<qualify "$:/state/plugin-info">> >
+{{||$:/core/ui/Components/plugin-info}}
+</$let>
+
+<%endif%>
+
+</$tiddler>
