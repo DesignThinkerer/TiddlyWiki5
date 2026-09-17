@@ -4,8 +4,6 @@ tags: PluginMechanism
 title: Creating a plugin
 type: text/vnd.tiddlywiki
 
-\define excluded-fields() created creator modified modifier title bag revision
-
 \define plugin-fields() 
 [
   {
@@ -87,7 +85,7 @@ type: text/vnd.tiddlywiki
 \function field.value() [<..currentTiddler>get{!!title}]
 
 \function json.fields()
-[{!!title}fields:exclude<excluded-fields>]
+[{!!title}fields:exclude[created creator modified modifier title bag revision]]
 :filter[<field.value>!is[blank]]
 text
 :reduce[<accumulator>jsonset{!!title},<field.value>]
